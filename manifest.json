@@ -2719,7 +2719,10 @@
   },
   "files": {
     "app.R": {
-      "checksum": "e402356b1d79d9b11f08e08355b4da37"
+      "checksum": "c2de836b3f4aaaeb380708f9742145db"
+    },
+    "Global-Solar-Power-Tracker-February-2026.xlsx": {
+      "checksum": "e1808a71fd8ffb28ede32bc9673f303d"
     }
   },
   "users": null
