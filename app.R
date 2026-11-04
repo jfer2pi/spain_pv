@@ -228,6 +228,15 @@ find_local_raipee <- function() {
   if (length(local)) local[which.max(file.mtime(local))] else NULL
 }
 
+# First bytes of a file as text, whatever its encoding
+raipee_peek <- function(path, n = 4000) {
+  con <- file(path, "rb"); b <- readBin(con, "raw", n); close(con)
+  b <- b[b != as.raw(0)]
+  t <- rawToChar(b)
+  if (!validUTF8(t)) t <- iconv(t, "latin1", "UTF-8", sub = "?")
+  t
+}
+
 get_raipee <- function() {
   f <- find_local_raipee()
   if (!is.null(f) && !is_live()) return(list(path = f, name = f, from = "local file"))
@@ -238,6 +247,11 @@ get_raipee <- function() {
       r <- get_url(u[1], tmp)
       if (resp_status(r) != 200) stop("HTTP ", resp_status(r))
       if (file.size(tmp) < 10000) stop("file too small (", file.size(tmp), " bytes)")
+      head_txt <- raipee_peek(tmp)
+      if (u[2] == ".xlsx" && !startsWith(head_txt, "PK")) stop("not an Excel file: ", substr(head_txt, 1, 80))
+      if (u[2] == ".csv" && (grepl("<html|<!doctype", tolower(head_txt)) ||
+                             !grepl("potencia", tolower(head_txt))))
+        stop("not the registry table: ", substr(gsub("\\s+", " ", head_txt), 1, 120))
       TRUE
     }, error = function(e) { why <<- c(why, paste0(basename(u[1]), ": ", conditionMessage(e))); FALSE })
     if (ok) return(list(path = tmp, name = paste0("ELECTRA download (", sub("^\\.", "", u[2]), ")"),
@@ -278,7 +292,12 @@ read_raipee <- function(path) {
   if (!nrow(d)) stop("No solar PV rows recognised in the RAIPEE export (columns: ",
                      paste(head(names(d), 30), collapse = ", "), ")", call. = FALSE)
 
-  mw_col <- pick_name(d, "potencia.*instalada", "potencia.*neta", "potencia.*bruta", "^potencia")
+  mw_col <- pick_name(d, "potencia.*instalada", "potencia.*neta", "potencia.*bruta", "^potencia",
+                      "potencia", "^kw", "_kw$", "_mw$", "capacidad")
+  if (is.na(mw_col))
+    stop("No capacity (potencia) column in the RAIPEE file. Columns found: ",
+         paste(head(names(d), 40), collapse = ", "), ". File starts: ",
+         substr(gsub("\\s+", " ", raipee_peek(path, 600)), 1, 300), call. = FALSE)
   mw_raw <- num_es(d[[mw_col]])
   # Unit from the column name; otherwise kW if the typical value is large
   mw <- if (grepl("mw", mw_col)) mw_raw else if (grepl("kw", mw_col)) mw_raw / 1000 else
