@@ -436,7 +436,8 @@ prep_data <- function(s) {
 
 current_data <- local({
   key <- NULL; val <- NULL
-  function() {
+  function(peek = FALSE) {
+    if (peek) return(!is.null(val))
     s <- load_data()
     k <- format(s$fetched, "%Y-%m-%d %H:%M:%OS3")
     if (!identical(k, key)) { val <<- prep_data(s); key <<- k }
@@ -444,7 +445,18 @@ current_data <- local({
   }
 })
 data_or_error <- function() tryCatch(current_data(), error = function(e) e)
-invisible(data_or_error())
+
+# Data that can be had without any download: already in memory, or a fresh cache
+data_ready <- function() {
+  current_data(peek = TRUE) ||
+    (file.exists(CACHE_FILE) &&
+       difftime(Sys.time(), file.mtime(CACHE_FILE), units = "secs") < CACHE_TTL)
+}
+
+# Connect Cloud allows 60 s for the app to start listening. Only warm up here
+# when that is fast; otherwise the first visitor sees a loading page while the
+# data is built inside the session (no start-up limit applies there).
+if (data_ready()) invisible(data_or_error())
 
 # ---- Linear design tokens ---------------------------------------------------
 
@@ -602,7 +614,19 @@ no_data_page <- function(e) {
 
 # ---- UI ---------------------------------------------------------------------
 
+loading_page <- function() {
+  page_fillable(
+    theme = theme, title = "Spain Solar PV Fleet",
+    card(card_header("Spain Solar PV Fleet"),
+         card_body(
+           p("Downloading the RAIPEE registry from the Ministry's ELECTRA service and placing ",
+             "installations on the map. The first load after a deploy can take a minute or two; ",
+             "the page reloads by itself when it's ready."),
+           uiOutput("boot_status"))))
+}
+
 ui <- function(req) {
+if (!data_ready()) return(loading_page())
 d <- data_or_error()
 if (inherits(d, "error")) return(no_data_page(d))
 
@@ -680,6 +704,20 @@ page_sidebar(
 # ---- Server -----------------------------------------------------------------
 
 server <- function(input, output, session) {
+  # Loading page: build the data after the page has been sent, then reload
+  if (!data_ready()) {
+    output$boot_status <- renderUI(div(class = "meta", "Working…"))
+    session$onFlushed(function() {
+      d <- data_or_error()
+      if (inherits(d, "error")) {
+        output$boot_status <- renderUI(tagList(
+          p(tags$b("The data could not be loaded.")), tags$pre(conditionMessage(d)),
+          p("Save the RAIPEE export from ", a(RAIPEE_CSV, href = RAIPEE_CSV, target = "_blank"),
+            " next to app.R as raipee_produccion.csv and redeploy.")))
+      } else session$reload()
+    }, once = TRUE)
+    return(invisible())
+  }
   d0 <- data_or_error()
   if (inherits(d0, "error")) return(invisible())
   D <- reactiveVal(d0)

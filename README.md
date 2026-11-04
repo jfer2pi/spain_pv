@@ -28,7 +28,8 @@ It is the fifth app in a series, alongside the [US](https://github.com/jfer2pi/e
 2. **Not seen yet.** The ELECTRA export couldn't be downloaded from the build environment (its proxy blocks the Ministry's servers), so the reader matches columns by pattern (potencia, municipio, provincia, titular, fecha...) and detects delimiter, encoding and kW/MW. The first real export will be checked against it, as was done for the Brazil and Australia apps.
 3. **Locations without geocoding.** Rather than geocoding thousands of installations, the app uses municipality centroids from Wikidata, one keyless query for all ~8,100 municipalities.
 
-4. **Startup time.** The Australia app's deploy showed that waiting on blocked downloads at startup breaks Connect Cloud's 60-second limit, so this app starts from committed files and pre-built data, with 8-second connection timeouts.
+4. **Startup time.** The first Connect Cloud deploy still missed the 60-second limit because, with no data in the repo, the RAIPEE download ran before Shiny was listening. Now the app only warms up at startup when cached data is already there; otherwise it starts at once, shows a loading page, builds the data in the session and reloads into the dashboard.
+5. **Startup time (Australia).** The Australia app's deploy showed that waiting on blocked downloads at startup breaks Connect Cloud's 60-second limit, so this app starts from committed files and pre-built data, with 8-second connection timeouts.
 
 ## Run locally
 
