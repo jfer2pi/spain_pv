@@ -44,8 +44,14 @@ library(htmltools)
 CACHE_FILE      <- "es_solar.rds"
 CACHE_TTL       <- 24 * 3600
 CACHE_VERSION   <- 1L
-CONNECT_TIMEOUT <- 20
+CONNECT_TIMEOUT <- 8
 # options(es_pv.offline = TRUE) skips all downloads and uses local files only
+# Startup reads the files committed next to app.R and only downloads what is
+# missing, so the app starts within Posit Connect Cloud's 60 s limit. The
+# sidebar button and the refresh workflow download everything again
+# (options(es_pv.live = TRUE)).
+is_live <- function() isTRUE(getOption("es_pv.live", FALSE))
+REE_FILE <- "es_ree_pv.csv"
 
 RAIPEE_CSV  <- "https://energia.serviciosmin.gob.es/Electra/descargarCSVProduccion.aspx"
 RAIPEE_XLSX <- "https://energia.serviciosmin.gob.es/Electra/descargarExcelProduccion.aspx"
@@ -216,7 +222,15 @@ read_xlsx_find <- function(path) {
   stop("No sheet with Potencia and Municipio columns in ", basename(path), call. = FALSE)
 }
 
+find_local_raipee <- function() {
+  local <- list.files(".", pattern = RAIPEE_LOCAL_PATTERN, ignore.case = TRUE)
+  local <- local[!grepl("^~\\$", local)]
+  if (length(local)) local[which.max(file.mtime(local))] else NULL
+}
+
 get_raipee <- function() {
+  f <- find_local_raipee()
+  if (!is.null(f) && !is_live()) return(list(path = f, name = f, from = "local file"))
   why <- character()
   if (!is_offline()) for (u in list(c(RAIPEE_CSV, ".csv"), c(RAIPEE_XLSX, ".xlsx"))) {
     tmp <- tempfile(fileext = u[2])
@@ -308,15 +322,20 @@ SELECT ?ine ?name ?coord WHERE {
 }'
 
 get_municipios <- function() {
-  if (file.exists(MUNI_FILE)) {
+  if (file.exists(MUNI_FILE) && !is_live()) {
     m <- read.csv(MUNI_FILE, colClasses = c("character", "character", "numeric", "numeric"),
                   encoding = "UTF-8")
     if (nrow(m) > 5000) return(as_tibble(m))
   }
   if (is_offline()) stop("No ", MUNI_FILE, " and offline", call. = FALSE)
-  r <- get_url(WIKIDATA, ua = APP_UA, timeout = 120,
-               query = list(query = WIKIDATA_QUERY, format = "json"))
-  if (resp_status(r) != 200) stop("Wikidata returned HTTP ", resp_status(r), call. = FALSE)
+  r <- tryCatch(get_url(WIKIDATA, ua = APP_UA, timeout = 120,
+                        query = list(query = WIKIDATA_QUERY, format = "json")), error = \(e) NULL)
+  if (is.null(r) || resp_status(r) != 200) {
+    if (file.exists(MUNI_FILE))   # live refresh failed: keep the committed copy
+      return(as_tibble(read.csv(MUNI_FILE, colClasses = c("character", "character", "numeric", "numeric"),
+                                encoding = "UTF-8")))
+    stop("Wikidata returned ", if (is.null(r)) "no response" else paste("HTTP", resp_status(r)), call. = FALSE)
+  }
   b <- resp_body_json(r, simplifyVector = TRUE)$results$bindings
   pt <- regmatches(b$coord$value, regexec("Point\\(([-0-9.eE]+) ([-0-9.eE]+)\\)", b$coord$value))
   m <- tibble(
@@ -354,7 +373,9 @@ locate <- function(r, m) {
 # ---- 3. REE installed capacity (national reference) -------------------------
 
 get_ree <- function() {
-  if (is_offline()) return(NULL)
+  if (!is_live() && file.exists(REE_FILE))
+    return(as_tibble(read.csv(REE_FILE, colClasses = c("integer", "numeric"))))
+  if (is_offline() || (!is_live() && file.exists(CACHE_FILE))) return(NULL)
   r <- tryCatch(get_url(REE_API, ua = APP_UA, timeout = 60, query = list(
     start_date = "2010-01-01T00:00", end_date = sprintf("%d-12-31T23:59", CY),
     time_trunc = "year")), error = \(e) NULL)
@@ -366,7 +387,8 @@ get_ree <- function() {
   v <- inc[[k]]$attributes$values
   tibble(year = as.integer(substr(vapply(v, \(x) x$datetime, ""), 1, 4)),
          mw = vapply(v, \(x) as.numeric(x$value), 0)) |>
-    group_by(year) |> summarise(mw = last(mw), .groups = "drop")
+    group_by(year) |> summarise(mw = last(mw), .groups = "drop") |>
+    (\(x) { tryCatch(write.csv(x, REE_FILE, row.names = FALSE), error = \(e) NULL); x })()
 }
 
 # ---- Build + cache ----------------------------------------------------------
@@ -687,6 +709,7 @@ server <- function(input, output, session) {
   observeEvent(input$refresh, {
     id <- showNotification("Downloading RAIPEE from ELECTRA…", duration = NULL, type = "message")
     on.exit(removeNotification(id), add = TRUE)
+    op <- options(es_pv.live = TRUE); on.exit(options(op), add = TRUE)
     res <- tryCatch(build_data(), error = function(e) e)
     if (inherits(res, "error")) {
       showNotification(paste("Refresh failed:", conditionMessage(res)), type = "error", duration = 8)

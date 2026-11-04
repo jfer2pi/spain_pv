@@ -18,6 +18,8 @@ It is the fifth app in a series, alongside the [US](https://github.com/jfer2pi/e
 
 **Locations:** RAIPEE gives the municipality, not coordinates, so installations are placed at their municipality's centroid and the map shows one bubble per municipality and stage. Municipalities are matched by INE code when the export has one, otherwise by name within the province, allowing for bilingual names and articles ("Puerto, El").
 
+**Startup:** Posit Connect Cloud gives an app 60 seconds to start, so at startup the app reads committed files (the pre-built `es_solar.rds`, `raipee_produccion.csv`, `es_municipios.csv`, `es_ree_pv.csv`) and only downloads what is missing. The sidebar button and the monthly *Refresh data* GitHub Action download everything again and commit the results.
+
 **Downloads and fallbacks:** the app tries the ELECTRA CSV, then the Excel export. If neither answers, it reads the newest `raipee*.csv` or `raipee*.xlsx` next to `app.R`. The parsed data is cached in `es_solar.rds` for 24 h; the sidebar button re-downloads it. If no data can be loaded, the app opens a page explaining what to add instead of failing to start.
 
 ## How it was built
@@ -25,6 +27,8 @@ It is the fifth app in a series, alongside the [US](https://github.com/jfer2pi/e
 1. **Choosing the source.** RAIPEE is Spain's official registry of generating installations, published daily as open data, so it plays the role EIA-860M plays for the US app. Fernando asked for the app to fetch it at runtime the same way.
 2. **Not seen yet.** The ELECTRA export couldn't be downloaded from the build environment (its proxy blocks the Ministry's servers), so the reader matches columns by pattern (potencia, municipio, provincia, titular, fecha...) and detects delimiter, encoding and kW/MW. The first real export will be checked against it, as was done for the Brazil and Australia apps.
 3. **Locations without geocoding.** Rather than geocoding thousands of installations, the app uses municipality centroids from Wikidata, one keyless query for all ~8,100 municipalities.
+
+4. **Startup time.** The Australia app's deploy showed that waiting on blocked downloads at startup breaks Connect Cloud's 60-second limit, so this app starts from committed files and pre-built data, with 8-second connection timeouts.
 
 ## Run locally
 
